@@ -1,0 +1,3 @@
+[workspace]
+members = ["teaclave_sgx_builder"]
+resolver = "2"

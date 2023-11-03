@@ -1,0 +1,3 @@
+[submodule "external_deps/incubator-teaclave-sgx-sdk"]
+	path = external_deps/incubator-teaclave-sgx-sdk
+	url = https://github.com/apache/incubator-teaclave-sgx-sdk.git
