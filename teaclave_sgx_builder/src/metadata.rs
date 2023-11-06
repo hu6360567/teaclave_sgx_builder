@@ -1,123 +1,103 @@
-use std::ffi::{OsStr, OsString};
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use serde::Deserialize;
 use serde_json::Value;
-use crate::{BuildMetadata, HostArch};
-use crate::teaclave::common_edl_serach_path;
+use crate::BuildMetadata;
+use crate::intel::edl::EDLMetadata;
+use crate::intel::IntelSGXSDKMetadata;
+use crate::teaclave::TeaclaveSGXSDKMetadata;
 
 pub(crate) const SGX_METADATA_KEY: &'static str = "sgx";
 
-#[derive(Debug, Deserialize)]
-pub struct IntelSGXSDKMetadata {
-    path: PathBuf,
+pub trait Metadata {
+    fn canonicalize(&mut self, base: &Path);
+
+    fn set_cargo_instruction(&self);
 }
 
-impl Default for IntelSGXSDKMetadata {
-    fn default() -> Self {
-        Self { path: PathBuf::from("/opt/intel/sgxsdk") }
-    }
-}
-
-impl Deref for IntelSGXSDKMetadata {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.path
-    }
-}
-
-impl IntelSGXSDKMetadata {
-    fn canonicalize(&mut self, base: &Path) {
-        self.path = canonicalize_from_base(&self.path, base).expect("fail to canonicalize intel sgx sdk path");
-    }
-
-    pub fn bin_path(&self) -> PathBuf {
-        match HostArch::default() {
-            HostArch::X86 => self.join("bin").join("x86"),
-            HostArch::X86_64 => self.join("bin").join("x64"),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TeaclaveSGXSDKMetadata {
-    path: PathBuf,
-}
-
-impl Deref for TeaclaveSGXSDKMetadata {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.path
-    }
-}
-
-impl TeaclaveSGXSDKMetadata {
-    fn canonicalize(&mut self, base: &Path) {
-        self.path = canonicalize_from_base(&self.path, base).expect("fail to canonicalize teaclave sgx sdk path");}
-}
-
-#[derive(Debug, Deserialize)]
-pub struct EDLMetadata {
-    pub path: PathBuf,
-    pub search_paths: Vec<PathBuf>,
-}
-
-impl EDLMetadata {
-    fn edl_file_name(&self) -> &OsStr {
-        self.path.as_path().file_name().unwrap()
-    }
-    fn file_name_suffix_of(&self, suffix: &str) -> OsString {
-        let mut filename = self.edl_file_name().to_os_string();
-        filename.push(suffix);
-
-        filename
-    }
-
-    pub fn trusted_header(&self) -> OsString {
-        self.file_name_suffix_of("_t.h")
-    }
-
-    pub fn trusted_source(&self) -> OsString {
-        self.file_name_suffix_of("_t.c")
-    }
-
-    pub fn untrusted_header(&self) -> OsString {
-        self.file_name_suffix_of("_u.h")
-    }
-
-    pub fn untrusted_source(&self) -> OsString {
-        self.file_name_suffix_of("_u.c")
-    }
-}
-
-fn canonicalize_from_base(p: &PathBuf, base: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn canonicalize_from_base(p: &PathBuf, base: &Path) -> std::io::Result<PathBuf> {
     if p.is_absolute() { std::fs::canonicalize(p.clone()) } else {
         std::fs::canonicalize(base.join(p))
     }
 }
 
-impl EDLMetadata {
-    fn canonicalize(&mut self, base: &Path) {
-        self.path = canonicalize_from_base(&self.path, base).expect("fail to canonicalize edl path");
-        self.search_paths = self.search_paths.iter().map(|sp| canonicalize_from_base(sp, base).expect("fail to canonicalize search path")).collect();
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Mode {
+    pub(crate) hardware: bool,
+    pub(crate) debug: bool,
+}
+
+impl Mode {
+    fn default(profile: &str) -> Self {
+        match profile {
+            "dev" | "debug" => Self::default_dev(),
+            "release" => Self::default_release(),
+            "test" => Self::default_test(),
+            "bench" => Self::default_bench(),
+            _ => {
+                panic!("no default mode");
+            }
+        }
     }
+    fn default_dev() -> Self {
+        Self {
+            hardware: false,
+            debug: true,
+        }
+    }
+
+    fn default_release() -> Self {
+        Self {
+            hardware: true,
+            debug: false,
+        }
+    }
+
+    fn default_test() -> Self {
+        Self::default_dev()
+    }
+
+    fn default_bench() -> Self {
+        Self::default_release()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModeMetadata(HashMap<String, Mode>);
+
+impl Deref for ModeMetadata {
+    type Target = HashMap<String, Mode>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildSystem {
+    NoStd,
+    Std,
+    Xargo,
 }
 
 
 #[derive(Default, Debug, Deserialize)]
-pub struct OptionBuildMetadata {
+pub struct PrepareBuildMetadata {
     pub intel_sgx_sdk: Option<IntelSGXSDKMetadata>,
     pub teaclave_sgx_sdk: Option<TeaclaveSGXSDKMetadata>,
     pub edl: Option<EDLMetadata>,
+    pub mode: Option<ModeMetadata>,
 }
 
 
-impl OptionBuildMetadata {
-    pub(crate) fn from_cargo_metadata(value: Option<&Value>, base: &Path) -> OptionBuildMetadata {
+impl PrepareBuildMetadata {
+    pub(crate) fn from_cargo_metadata(value: Option<&Value>, base: &Path) -> PrepareBuildMetadata {
         let mut obm = match value {
-            None => OptionBuildMetadata::default(),
+            None => PrepareBuildMetadata::default(),
             Some(value) => serde_json::from_value(value.clone()).expect("fail to parse metadata")
         };
 
@@ -154,22 +134,39 @@ impl OptionBuildMetadata {
             first.edl.get_or_insert(edl);
         }
 
+        if let Some(mode) = second.mode {
+            first.mode.get_or_insert(mode);
+        }
+
         first
     }
 
     pub(crate) fn build(self) -> BuildMetadata {
         let intel_sgx_sdk = self.intel_sgx_sdk.unwrap_or_else(IntelSGXSDKMetadata::default);
-        let teaclave_sgx_sdk = self.teaclave_sgx_sdk.expect("teaclave not set in metadata");
-        let mut edl = self.edl.expect("edl not set in metadata");
+        intel_sgx_sdk.set_cargo_instruction();
 
-        // add common search path into edl
-        edl.search_paths.append(&mut common_edl_serach_path(&teaclave_sgx_sdk));
+        let teaclave_sgx_sdk = self.teaclave_sgx_sdk.expect("teaclave not set in metadata");
+        teaclave_sgx_sdk.set_cargo_instruction();
+
+        let edl = self.edl.expect("edl not set in metadata");
+        edl.set_cargo_instruction();
+
+        // get profile and its build mode
+        let build_profile = std::env::var("PROFILE").unwrap();
+        let build_profile = if build_profile == "debug" { "dev".to_string() } else { build_profile };
+
+        let mode = if let Some(mode) = self.mode.and_then(|ref m| m.get(&build_profile).map(|m| m.clone())) {
+            mode
+        } else {
+            Mode::default(&build_profile)
+        };
 
 
         BuildMetadata {
             intel_sgx_sdk,
             teaclave_sgx_sdk,
             edl,
+            mode,
         }
     }
 }

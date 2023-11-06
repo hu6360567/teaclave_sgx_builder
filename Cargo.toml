@@ -21,3 +21,5 @@ sgx_urts = { path = "external_deps/incubator-teaclave-sgx-sdk/sgx_urts" }
 [workspace.metadata.sgx]
 intel_sgx_sdk = { path = "/opt/intel/sgxsdk" }
 teaclave_sgx_sdk = { path = "external_deps/incubator-teaclave-sgx-sdk" }
+mode = { dev = { hardware = false, debug = true }, release = { hardware = true, debug = false } }
+build_std = "std"   # no_std, std, xargo

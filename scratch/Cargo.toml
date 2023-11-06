@@ -6,6 +6,8 @@ edition.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+sgx_urts = {workspace = true}
+sgx_types = {workspace = true}
 
 [build-dependencies]
 cargo_metadata = "0.18"
@@ -15,4 +17,4 @@ serde_json = "1.0"
 regex = "1.10"
 
 [package.metadata.sgx]
-edl = {path = "enclave/enclave.edl", search_paths = ["enclave", "ssss"]}
+edl = {path = "enclave/enclave.edl", search_paths = ["enclave"]}
